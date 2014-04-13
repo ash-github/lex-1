@@ -1,0 +1,5 @@
+%{
+correct this
+
+another block
+%}
