@@ -1,7 +1,7 @@
 lex
 ===
 
-This is my toy implementations of the lex (the lexcial analyzer). The code 
+This is my toy implementation of the lex (the lexcial analyzer).
 
 The code is over 3-years old. I don't have time to maintain it right now, so it may not work as expected.
 
