@@ -2,7 +2,7 @@
 #define STACK_H
 #include <string.h>
 
-#include "Limits.h"
+#include "define.h"
 
 template <class T>
 class Stack

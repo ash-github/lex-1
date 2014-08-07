@@ -1,18 +1,18 @@
 #include "DFA.h"
+#include "lexical.h"
+
 #include <stack>
-#include <hash_map>
+//#include <hash_map>
+#include <set>
 using namespace std;
-using namespace stdext;
+//using namespace stdext;
 
-
-#include <time.h>
-clock_t timeWHILE=0,timeINSERT=0,timeMOVE=0,timeCLEAR=0;
-int totalClose=0;
 
 DFA::~DFA()
 {
 }
 
+/*
 string DFA::recognize(TokenLexDef tokenDefs[],const char* str)
 {
 	//return "hh";	
@@ -45,44 +45,52 @@ string DFA::recognize(TokenLexDef tokenDefs[],const char* str)
 // 	}
 
 }
+*/
 
-DFAState* DFA::eclosure(NFAState* nfastate)
+// pop the nfaStates array
+void eclosure(NFAState* nfastate,DFAState* res)
 {
-	DFAState* res=new DFAState;
+	if(res->nfaBits[nfastate->stateId]) return;
+	
+	res->nfaBits.set(nfastate->stateId);
+	res->nfaStates.push_back(nfastate);
+	res->updateAcString(nfastate);
 
-	res->nfaStates.insert(nfastate);
-	res->nfaStates.insert(nfastate->edge0out.begin(),nfastate->edge0out.end());
-	res->nfaBits.or(nfastate->eBits);
-
-	return res;
-}
-
-// void DFA::eclosure(NFAState* nfastate,DFAState* res)
-// {
-// 	res->nfaStates.insert(nfastate);
-// 	res->nfaStates.insert(nfastate->edge0out.begin(),nfastate->edge0out.end());
-// 	res->nfaBits.or(nfastate->eBits);
-// }
-
-void DFA::completeEclosure(DFAState* dfastate,DFAState* res)
-{
-	set<NFAState*>::iterator it=dfastate->nfaStates.begin();
-	for(;it!=dfastate->nfaStates.end();it++)
+	for(NFAStateArrIter it=nfastate->eedges.begin();it!=nfastate->eedges.end();++it)
 	{
-		res->nfaStates.insert(*it);
-		res->nfaStates.insert((*it)->edge0out.begin(),(*it)->edge0out.end());
+		eclosure(*it,res);
+	}
+}
+void eclosure(DFAState* start,DFAState* res)
+{
+	res->nfaStates.clear();
+	res->nfaBits.reset();
+	for(NFAStateArrIter it=start->nfaStates.begin();it!=start->nfaStates.end();it++)
+	{
+		eclosure(*it,res);
 	}
 }
 
-DFAState* DFA::quickEclosure(DFAState* dfastate)
+// only set epsilon bits
+void quickEclosure(NFAState* start,DFAState* res,BitSet& visited)
 {
-	DFAState* res=new DFAState;
-	res->nfaBits=dfastate->nfaBits;
-	set<NFAState*>::iterator it=dfastate->nfaStates.begin();
-	for(;it!=dfastate->nfaStates.end();it++)
-		res->nfaBits.or((*it)->eBits);
+	if(visited[start->stateId]) return;
 
-	return res;
+	visited.set(start->stateId);
+	res->nfaBits.or(start->eBits);
+	for(NFAStateArrIter it=start->eedges.begin();it!=start->eedges.end();++it)
+	{
+		quickEclosure(*it,res,visited);
+	}
+}
+void quickEclosure(DFAState* start,DFAState* res)
+{
+	res->nfaBits=start->nfaBits;
+	BitSet visited;
+	for(NFAStateArrIter it=start->nfaStates.begin();it!=start->nfaStates.end();it++)
+	{
+		quickEclosure(*it,res,visited);
+	}
 }
 
 
@@ -93,95 +101,81 @@ struct setDFAStateCMP
 		return first->nfaBits<second->nfaBits;
 	}
 };
-void DFA::build(LexicalDesc& lexdesc)
+void DFA::build(const LexEnv* lexEnv)
 {
 	clear();
 
-	set<DFAState*,setDFAStateCMP> Dstates;	
+	set<DFAState*,setDFAStateCMP> Dstates;
+	typedef set<DFAState*,setDFAStateCMP>::iterator DFASetIter;
+
 	list<DFAState*> workList;	
 
-	nfa.build(lexdesc);
+	printf("building nfa...\n");
+	nfa.build(lexEnv);
+
+	printf("converting to dfa...\n");
 
 	//0 for dead state
 	stateCnt=1;
 
-	for(int i=0;i<lexdesc.startStateCnt;i++)
+	for(int i=0,iLen=lexEnv->startStates.size();i<iLen;i++)
 	{
-		DFAState* initialState=eclosure(nfa.nfaStartStates[i]);
-		initialState->stateNum=stateCnt;
-		initialState->updateAcString();
+		DFAState* initialState=newState();
+		eclosure(nfa.nfaStartStates[i],initialState);
+		//initialState->stateId=stateCnt;
+		//initialState->updateAcString();
 
-		dfaAccept[stateCnt++]=initialState->acceptStrIndex;
+		dfaAccept[initialState->stateId]=initialState->acceptStrIndex;
 
 		Dstates.insert(initialState);
 		workList.push_back(initialState);
 	}
 
-	DFAState* T,*U;
-	DFAState tmpMoveState;
-
-	int nextstatenum=0;
-
-//	DFAState moveon[SYMBOL_ALL_CNT];
-	set<NFAState*>::iterator itnfa;
-	EdgeItType itnfae;
+	DFAState* U=newState();
 
 	while(!workList.empty())
 	{			
-		T=workList.front();workList.pop_front();
+		DFAState* T=workList.front();workList.pop_front();
 
-		DFAState moveon[SYMBOL_ALL_CNT];
- 		
-		clock_t time1=clock();
-		for(itnfa=T->nfaStates.begin();itnfa!=T->nfaStates.end();itnfa++)
+		DFAState moveon[SYMBOL_ALL_CNT];// temporary, stateId doesn't matter
+
+		for(NFAStateArrIter itnfa=T->nfaStates.begin();itnfa!=T->nfaStates.end();itnfa++)
 		{
-			for(itnfae=(*itnfa)->edges.begin();itnfae!=(*itnfa)->edges.end();itnfae++)
-				moveon[(*itnfae).onSymbol].addNFAState((*itnfae).toState);
+			for(map<int,NFAState*>::iterator edge_it=(*itnfa)->cedges.begin();edge_it!=(*itnfa)->cedges.end();edge_it++)
+				moveon[edge_it->first].addNFAState(edge_it->second);
 		}
- timeMOVE+=clock()-time1;		
+	
 		for(int symbol=SYMBOL_BASE;symbol<=SYMBOL_LAST;symbol++)	
 		{
-			clock_t time1=clock();
 			if(moveon[symbol].nfaStates.empty()) continue;
-			 timeCLEAR+=clock()-time1;	
-			
- time1=clock();
-			U=quickEclosure(&moveon[symbol]);
 
-			totalClose+=moveon[symbol].nfaStates.size();
-			timeWHILE+=clock()-time1;
-		
-			time1=clock();
-			pair<set<DFAState*,setDFAStateCMP>::iterator,bool> insRes=Dstates.insert(U);
-			timeINSERT+=clock()-time1;
-			time1=clock();
+			quickEclosure(&moveon[symbol],U);
 
+			//totalClose+=moveon[symbol].nfaStates.size();
+			int transit_id=U->stateId;
+
+			pair<DFASetIter,bool> insRes=Dstates.insert(U); // unique DFAState
 			if(insRes.second==true)
 			{
-				clock_t time1=clock();
-				completeEclosure(&moveon[symbol],U);
-				timeWHILE+=clock()-time1;		
+				eclosure(&moveon[symbol],U);
 
-				U->stateNum=stateCnt++;	
-				U->updateAcString();
+				//U->stateId=stateCnt++;	
+				//U->updateAcString();
 
-				nextstatenum=U->stateNum;	
-				dfaAccept[nextstatenum]=U->acceptStrIndex;
+				transit_id=U->stateId;	
+				dfaAccept[transit_id]=U->acceptStrIndex;
 				
 				workList.push_back(U);
 
-				
+				U=newState();
 			}
 			else
 			{
-				nextstatenum=(*(insRes.first))->stateNum;					
-
-				delete U;U=NULL;
+				transit_id=(*(insRes.first))->stateId;
 			}
 
-			dfaTable[T->stateNum][symbol-SYMBOL_BASE]=nextstatenum;			
+			dfaTable[T->stateId][symbol-SYMBOL_BASE]=transit_id;			
 			//moveon[symbol].clear();
-			timeCLEAR+=clock()-time1;
 		}
 	}
 
@@ -191,7 +185,9 @@ void DFA::build(LexicalDesc& lexdesc)
 	set<DFAState*,setDFAStateCMP>::iterator itd=Dstates.begin();
 	for(;itd!=Dstates.end();itd++)
 		delete *itd;
-	Dstates.clear();
+	if(U) delete U;
+
+	printf("#\n");
 }
 
 
@@ -202,6 +198,30 @@ void DFA::clear()
 	memset(dfaAccept,0,sizeof(dfaAccept));
 	stateCnt=0;
 }
+
+
+// void DFA::parti(int c_start,vector<int>& group,int* old_belong_to,)
+// {
+// 	for(;c_start<=SYMBOL_LAST;++c_start)
+// 	{
+// 		for()
+// 		dfaTable[group
+// 	}
+// }
+// 
+// 
+// void new_partition(vector<int>& ,new_part,belong_to)
+// {
+// 	int map_same[i][j];
+// 	for(int i=0;i<old_part.size()-1;++i)
+// 		for(int j=i+1;j<old_part.size();++j)
+// 		{
+// 			if(old_part[i])
+// 		}
+// }
+
+
+/*
 
 struct setGroupItem
 {
@@ -221,6 +241,17 @@ struct setGroupCMP
 	} 
 };
 
+
+void new_partition(vector<NFAState*> ,new_part,belong_to)
+{
+	int map_same[i][j];
+	for(int i=0;i<old_part.size()-1;++i)
+		for(int j=i+1;j<old_part.size();++j)
+		{
+			if(old_part[i])
+		}
+}
+
 void DFA::minimize()
 {
 	set<setGroupItem*,setGroupCMP> groups;
@@ -235,9 +266,10 @@ void DFA::minimize()
 	belongto[0]=0;
 	for(int stt=1;stt<=stateCnt;stt++)//initial partion
 	{
-		groups.insert(new setGroupItem(dfaAccept[stt]+1,stt));
-		belongto[stt]=dfaAccept[stt]+1;
-		if(dfaAccept[stt]+1>maxgroup) maxgroup=dfaAccept[stt]+1;
+		int g=dfaAccept[stt]+1;
+		belongto[stt]=g;
+		groups.insert(new setGroupItem(g,stt));
+		if(g>maxgroup) maxgroup=dfaAccept[stt]+1;
 	}
 
 	maxgroup++;
@@ -394,3 +426,4 @@ void DFA::minimize()
 	delete [] represent;
 	delete [] belongto;
 }
+*/

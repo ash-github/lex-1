@@ -1,14 +1,14 @@
 #include "NFA.h"
+#include "Lexical.h"
+
 #include <cassert>
 #include <stack>
-#include <hash_map>
 #include <map>
 #include <string>
 using namespace std;
-using namespace stdext;
 
 
-static int getOpPriority(char op)
+static __forceinline int getOpPriority(char op)
 {	
 	switch(op)
 	{
@@ -28,8 +28,10 @@ static int getOpPriority(char op)
 	}
 }
 
-static char handleTransChar(char after)
+static __forceinline char escapeChar(char*& p)
 {
+	if(*p!='\\') return *p;
+	char after=*(++p);
 	switch(after)
 	{
 	case 'b':
@@ -47,93 +49,73 @@ static char handleTransChar(char after)
 	}
 }
 
-NFAPart::NFAPart()
+NFA::NFA()
 {
-	stateCnt=0;startState=endState=NULL;
+	stateCnt=0;start=out=NULL;
 	memset(allStates,0,sizeof(allStates));
 }
-NFAPart::~NFAPart()
+NFA::NFA(const char* re,const map<string,NFA*>& marcoDefs)
+{
+	stateCnt=0;start=out=NULL;
+	memset(allStates,0,sizeof(allStates));
+	NFAFrag frag=fromRE(re,marcoDefs);
+	start=frag.start;out=frag.out;
+}
+NFA::~NFA()
 {
 	clear();
 }
 
-// static void elinkNFAState(NFAState* a,NFAState* b)
-// {
-// 	if(a==b) return;
-// 	
-// 	a->edge0out.insert(b);
-// 	a->eBits.set(b->state);	
-// 	a->edge0out.insert(b->edge0out.begin(),b->edge0out.end());
-// 	a->eBits.or(b->eBits);
-// 
-// 	b->edge0in.insert(a);
-// 
-// 	EdgeInItType it=a->edge0in.begin();
-// 	for(;it!=a->edge0in.end();it++)
-// 	{
-// 		(*it)->edge0out.insert(b);
-// 		(*it)->eBits.set(b->state);	
-// 		(*it)->edge0out.insert(b->edge0out.begin(),b->edge0out.end());
-// 		(*it)->eBits.or(b->eBits);
-// 
-// 		b->edge0in.insert(*it);
-// 	}
-// }
-
-static void recursiveLink(NFAState* a,NFAState* b)
-{	
-	a->edge0out.insert(b);
-	a->eBits.set(b->state);	
-	
-	a->edge0out.insert(b->edge0out.begin(),b->edge0out.end());
-	a->eBits.or(b->eBits);
-	EdgeInItType it=a->edge0in.begin();
-	for(;it!=a->edge0in.end();it++)
+void patch(NFAState* a,NFAState* b)
+{
+	if(!a->eBits[b->stateId])
 	{
-		recursiveLink(*it,b);
+		a->eedges.push_back(b);
+		a->eBits.set(b->stateId);
 	}
 }
 
-static void elinkNFAState(NFAState* a,NFAState* b)
-{
-	if(a==b) return;
-	recursiveLink(a,b);
-	b->edge0in.insert(a);
-}
 
-void NFAPart::pushOp(char op,stack<char>& opstack,stack<NFAState*>& stateStack,int& stateNum)
+void NFA::pushOp(char op,stack<char>& opstack,stack<NFAFrag>& stateStack,void* extra_data)
 {
 	if(opstack.empty()) opstack.push(op);
 	else
 	{
 		while(!opstack.empty()&&getOpPriority(opstack.top())>=getOpPriority(op))
 		{
-			handleOp(opstack.top(),stateStack,stateNum);
+			handleOp(opstack.top(),opstack,stateStack);
 			opstack.pop();
+		}
+
+		if(op=='{')
+		{
+			int* counts=(int*)extra_data; // [0]:l, [1]: h
+			opstack.push(counts[0]);
+			opstack.push(counts[1]);
 		}
 		opstack.push(op);
 	}
 }
 
-int countl=0,counth=0;
-void NFAPart::handleOp(char op,stack<NFAState*>& stateStack,int& stateNum)
+void NFA::handleOp(char op,stack<char>& opstack,stack<NFAFrag>& stateStack)
 {
 	switch(op)
 	{
 	case '.':
 		{
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+			NFAState* start=newState();
+			NFAState* end=newState();
 
+			// todo: a special node
 			for(int symbol=SYMBOL_BASE;symbol<'\n';symbol++)
-				startState->edges.insert(NFAEdge(symbol,endState));
-
+				start->cedges[symbol]=end;
 			for(int symbol='\n'+1;symbol<=SYMBOL_LAST;symbol++)
-				startState->edges.insert(NFAEdge(symbol,endState));
+				start->cedges[symbol]=end;
 
-			stateStack.push(endState);stateStack.push(startState);
+			stateStack.push(NFAFrag(start,end));
 		}
 		break;
+		// check?
 // 	case '?':
 // 		{
 // 			NFAState* startStateA=stateStack.top();stateStack.pop();
@@ -160,115 +142,114 @@ void NFAPart::handleOp(char op,stack<NFAState*>& stateStack,int& stateNum)
 // 		break;	
 	case '?':
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
+// 			NFAState* startStateA=stateStack.top();stateStack.pop();
+// 			NFAState* endStateA=stateStack.top();stateStack.pop();
+
+			NFAFrag operand=stateStack.top();stateStack.pop();
+
 			//thompsonClosure
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+			NFAState* startState=newState();
+			NFAState* endState=newState();
 
-			elinkNFAState(startState,startStateA);
-			elinkNFAState(startState,endState);
-			elinkNFAState(endStateA,endState);
+			patch(startState,operand.start);
+			patch(operand.out,endState);
+			patch(startState,endState);
 
-			stateStack.push(endState);stateStack.push(startState);	
+			stateStack.push(NFAFrag(startState,endState));
+
+// 			elinkNFAState(startState,startStateA);
+// 			elinkNFAState(startState,endState);
+// 			elinkNFAState(endStateA,endState);
+// 
+// 			stateStack.push(endState);stateStack.push(startState);	
 		}
 		break;
 	case '+':
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
-			//thompsonClosure
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+			NFAFrag operand=stateStack.top();stateStack.pop();
 
-			elinkNFAState(startState,startStateA);
-			elinkNFAState(endStateA,startStateA);
-			elinkNFAState(endStateA,endState);
+			patch(operand.out,operand.start);
 
-			stateStack.push(endState);stateStack.push(startState);	
+			stateStack.push(operand);
 		}
 		break;		
 	case '|':
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
-			NFAState* startStateB=stateStack.top();stateStack.pop();
-			NFAState* endStateB=stateStack.top();stateStack.pop();
-			//thompsonOr
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+			NFAFrag operand1=stateStack.top();stateStack.pop();
+			NFAFrag operand2=stateStack.top();stateStack.pop();
 
-			elinkNFAState(startState,startStateA);
-			elinkNFAState(startState,startStateB);
-			elinkNFAState(endStateA,endState);
-			elinkNFAState(endStateB,endState);	
+			//NFAState* start=newState();
+			NFAState* end=newState();
 
-			stateStack.push(endState);stateStack.push(startState);
+			//patch(start,operand1.start);
+			//patch(start,operand2.start);
+			patch(operand1.start,operand2.start);
+			patch(operand1.out,end);
+			patch(operand2.out,end);	
+
+			stateStack.push(NFAFrag(operand1.start,end));
 		}
 		break;
 	case '{':
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
+			NFAFrag operand=stateStack.top();stateStack.pop();
 
 			//if(countl>counth){int temp=counth;counth=countl;countl=temp;}
 
-			if(startStateA==endStateA)
-			{				
-				stateStack.push(endStateA);stateStack.push(startStateA);	
-				break;
-			}
+// 			if(startStateA==endStateA)
+// 			{				
+// 				stateStack.push(endStateA);stateStack.push(startStateA);	
+// 				break;
+// 			}
 
-			NFAFrag frag(startStateA,endStateA);
-			NFAState* newStart,*newEnd,*lastEnd,*firstStart;			
+			int counth=opstack.top();opstack.pop();
+			int countl=opstack.top();opstack.pop();
 
 			if(counth==0)//infinite
 			{
-				if(countl==0)
-				{	
-					elinkNFAState(startStateA,endStateA);
-					elinkNFAState(endStateA,startStateA);
-					stateStack.push(startStateA);stateStack.push(startStateA);
+				if(countl==0) //*
+				{
+					patch(operand.start,operand.out);
+					patch(operand.out,operand.start);
+					stateStack.push(operand);
 					break;
 				}
-				else if(countl==1)
+				else if(countl==1) // +
 				{					
-					elinkNFAState(endStateA,startStateA);
-					stateStack.push(endStateA);stateStack.push(startStateA);
+					patch(operand.out,operand.start);
+					stateStack.push(operand);
 					break;
 				}
 				else
 				{
-					frag.getCopy(allStates,stateNum,newStart,newEnd);
-					lastEnd=newEnd;firstStart=newStart;
+					NFAState * start=operand.start,
+						*end=operand.out;
 
 					for(int i=1;i<countl;i++)
 					{
-						frag.getCopy(allStates,stateNum,newStart,newEnd);
-						elinkNFAState(lastEnd,newStart);	
-						lastEnd=newEnd;
-					}
-					///////////check
-					elinkNFAState(startStateA,endStateA);
-					elinkNFAState(endStateA,startStateA);
-					elinkNFAState(lastEnd,startStateA);
+						NFAFrag new_frag=cloneFrag(operand);
 
-					stateStack.push(endStateA);stateStack.push(firstStart);
+						patch(end,new_frag.start);
+						end=new_frag.out;
+					}
+
+					///////////check
+					patch(end,start);
+					stateStack.push(NFAFrag(start,end));
 					break;
 				}
-				
 			}
 			else if(counth==1)
 			{
-				if(countl==0)
+				if(countl==0) // ?
 				{
-					elinkNFAState(startStateA,endStateA);
-					stateStack.push(endStateA);stateStack.push(startStateA);	
+					patch(operand.start,operand.out);
+					stateStack.push(operand);
 					break;
 				}
 				else if(countl==1)
 				{
-					stateStack.push(endStateA);stateStack.push(startStateA);	
+					stateStack.push(operand);
 					break;
 				}
 				//no else,countl<=counth
@@ -276,40 +257,36 @@ void NFAPart::handleOp(char op,stack<NFAState*>& stateStack,int& stateNum)
 			else//counth>1
 			{
 				int startindex=countl;
+
+				NFAState* lend; // countl end
+				NFAState* lastend=operand.out; // for concate
+
 				if(countl==0)
 				{
-					frag.getCopy(allStates,stateNum,newStart,newEnd);
-					elinkNFAState(newStart,newEnd);
-					lastEnd=newEnd;
-					startindex=1;
-					firstStart=newStart;
+ 					lend=operand.start;
+					patch(lend,lastend);
 				}
 				else
 				{
-					frag.getCopy(allStates,stateNum,newStart,newEnd);
-					lastEnd=newEnd;firstStart=newStart;
-					startindex=countl;
-
 					for(int i=1;i<countl;i++)
 					{
-						frag.getCopy(allStates,stateNum,newStart,newEnd);
-						elinkNFAState(lastEnd,newStart);	
-						lastEnd=newEnd;
+						NFAFrag new_frag=cloneFrag(operand);
+						patch(lastend,new_frag.start);
+						lastend=new_frag.out;
 					}
+					lend=lastend;
 				}
 
-				for(int i=startindex;i<counth-1;i++)
+				for(int i=max(1,countl);i<counth;i++)
 				{
-					frag.getCopy(allStates,stateNum,newStart,newEnd);
-					elinkNFAState(lastEnd,newStart);				
-					elinkNFAState(lastEnd,newEnd);
-					lastEnd=newEnd;
+					NFAFrag new_frag=cloneFrag(operand);
+					patch(lastend,new_frag.start);
+					lastend=new_frag.out;
+					patch(lend,lastend);
 				}
-
-				elinkNFAState(lastEnd,startStateA);
-				elinkNFAState(lastEnd,endStateA);
-
-				stateStack.push(endStateA);stateStack.push(firstStart);	
+				
+				operand.out=lastend;
+				stateStack.push(operand);	
 				break;
 			}			
 			
@@ -317,72 +294,69 @@ void NFAPart::handleOp(char op,stack<NFAState*>& stateStack,int& stateNum)
 		break;	
 	case '&':		
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
-			NFAState* startStateB=stateStack.top();stateStack.pop();
-			NFAState* endStateB=stateStack.top();stateStack.pop();
+			NFAFrag operand1=stateStack.top();stateStack.pop();
+			NFAFrag operand2=stateStack.top();stateStack.pop();
+			patch(operand2.out,operand1.start);
 
-			elinkNFAState(endStateB,startStateA);	
-
-			stateStack.push(endStateA);stateStack.push(startStateB);
+			stateStack.push(NFAFrag(operand2.start,operand1.out));
 		}
 		break;
-// 	case '*':		
-// 		{
-// 			NFAState* startStateA=stateStack.top();stateStack.pop();
-// 			NFAState* endStateA=stateStack.top();stateStack.pop();
-// 
-// 			elinkNFAState(startStateA,endStateA);
-// 			elinkNFAState(endStateA,startStateA);
-// 
-// 			stateStack.push(endStateA);stateStack.push(startStateA);			
-// 		}
-// 		break;
 	case '*':		
 		{
-			NFAState* startStateA=stateStack.top();stateStack.pop();
-			NFAState* endStateA=stateStack.top();stateStack.pop();
-			//thompsonClosure
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+			NFAFrag operand=stateStack.top();stateStack.pop();
 
-			elinkNFAState(startState,startStateA);	
-			elinkNFAState(startState,endState);	
-			elinkNFAState(endStateA,startStateA);	
-			elinkNFAState(endStateA,endState);	
+			//NFAState* end=newState();
+			patch(operand.start,operand.out);
+			patch(operand.out,operand.start);
+			//patch(operand.out,end);
 
-			stateStack.push(endState);stateStack.push(startState);			
+			//stateStack.push(operand.start,end));
+			stateStack.push(operand);
 		}
 		break;
 	default:
 		{
-			NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-			NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
-			startState->edges.insert(NFAEdge(op,endState));
-			stateStack.push(endState);stateStack.push(startState);
+			NFAState* start=newState();
+			NFAState* end=newState();
+			start->cedges[op]=end;
+			stateStack.push(NFAFrag(start,end));
 		}
 		break;
 	}
 }
 
-void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
+// little wrap
+struct MacroDefMap
+{
+	MacroDefMap(const map<string,NFA*>* _mm):_themap(_mm){}
+	NFA* get(const string& s)
+	{
+		map<string,NFA*>::const_iterator it=_themap->find(s);
+		return (it==_themap->end()?0:it->second);
+	}
+	const map<string,NFA*>* _themap;
+};
+
+NFAFrag NFA::fromRE(const char* re,const map<string,NFA*>& _marcoDefs)
 {	
-	//clear();
+	// no clear, call many times
+
+	MacroDefMap marcoDefs(&_marcoDefs);
 
 	char* p=(char*)re;
 
 	stack<char> opstack;
 
-	stack<NFAState*> stateStack;
-	int stateNum=stateCnt;
+	stack<NFAFrag> stateStack;
+	int stateId=stateCnt;
 
 	bool canFollowConcat=false;
 	while(*p)
 	{
-		//handle concate
+		//handle concatenate
 		if(*p=='(')
 		{
-			if(canFollowConcat) pushOp('&',opstack,stateStack,stateNum);
+			if(canFollowConcat) pushOp('&',opstack,stateStack);
 			canFollowConcat=false;
 		}
 		else if(*p==')'||
@@ -402,7 +376,7 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 			if(*p!='{')
 			{					
 				if(canFollowConcat)			
-					pushOp('&',opstack,stateStack,stateNum);
+					pushOp('&',opstack,stateStack);
 				canFollowConcat=true;
 			}						
 		}
@@ -415,7 +389,7 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 
 				int mode=0;//0 for subst, 1 for count
 
-				int l=0,h=0;
+				int countl=0,counth=0;
 
 				char buf[256];char* q=buf;
 				while(*p!='}')
@@ -436,23 +410,27 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 				if(mode==1)
 				{
 					counth=atoi(buf);
-					assert(counth>=countl);
-					pushOp('{',opstack,stateStack,stateNum);
+
+					bool check=(counth>=countl&&countl>=0&&counth<=255);
+					assert(check);
+					if(!check)
+					{
+						printf("Wrong params for {m,n}\n");
+						exit(-1);
+					}
+					
+					int counts[]={countl,counth};
+
+					pushOp('{',opstack,stateStack,counts);
 				}
 				else
 				{
-					if(canFollowConcat) pushOp('&',opstack,stateStack,stateNum);
+					if(canFollowConcat) pushOp('&',opstack,stateStack);
 
-					NFAPart* auxPart=auxNFAPart.searchPart(buf);
-					if(auxPart!=NULL)
+					NFA* macrodef=marcoDefs.get(buf);
+					if(macrodef!=NULL)
 					{
-						//copy
-						NFAState* startState=NULL;
-						NFAState* endState=NULL;
-						int cnt=0;
-						auxPart->getCopy(allStates,stateNum,startState,endState,true);						
-
-						stateStack.push(endState);stateStack.push(startState);
+						stateStack.push(cloneFrag(*macrodef));
 					}
 				}
 
@@ -464,33 +442,17 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 			{
 				if(*(++p)=='"') break;
 				
-				NFAState* startState=NULL;
-				NFAState* endState=NULL;
-				NFAState* leftEnd,*rightEnd;
+				NFAState* start=newState();
+				NFAState* last=start;
 
-				leftEnd=new NFAState(stateNum);allStates[stateNum++]=leftEnd;
-				rightEnd=new NFAState(stateNum);allStates[stateNum++]=rightEnd;
-				if(*p=='\\') 
-					leftEnd->edges.insert(NFAEdge(handleTransChar(*(++p)),rightEnd));
-				else
-					leftEnd->edges.insert(NFAEdge(*p,rightEnd));
-
-
-				startState=leftEnd;
-
-				while(*(++p)!='"')
+				do
 				{
-					leftEnd=rightEnd;
-					rightEnd=new NFAState(stateNum);allStates[stateNum++]=rightEnd;
-					if(*p=='\\')
-						leftEnd->edges.insert(NFAEdge(handleTransChar(*(++p)),rightEnd));
-					else
-						leftEnd->edges.insert(NFAEdge(*p,rightEnd));
-				}
-
-				endState=rightEnd;
-
-				stateStack.push(endState);stateStack.push(startState);					
+					NFAState* newst=newState();
+					last->cedges[escapeChar(p)]=newst;
+					last=newst;
+				}while(*(++p)!='"'); // escaped " already consumed;
+				
+				stateStack.push(NFAFrag(start,last));					
 			}
 			break;
 
@@ -502,10 +464,10 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 
 				if(*p=='^') {mode=1;p++;}
 
-				NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-				NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
+				NFAState* startState=newState();
+				NFAState* endState=newState();
 
-				if(mode==1)
+				if(mode==1) // exclude
 				{
 					char lastC=*p;
 					bool exclude[SYMBOL_CNT]={false};
@@ -519,19 +481,18 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 								exclude[lastC++-SYMBOL_BASE]=true;
 							++p;
 						}
-						else if(*p=='\\')	
-							exclude[handleTransChar(*(++p))-SYMBOL_BASE]=true;
-						else
-							exclude[*p-SYMBOL_BASE]=true;
+						else 
+							exclude[escapeChar(p)-SYMBOL_BASE]=true;
 
 						lastC=*p;
 						p++;
 					}
 
+					// todo: a special node
 					for(int symbol=0;symbol<SYMBOL_CNT;symbol++)
 						if(!exclude[symbol]) 
 						{
-							startState->edges.insert(NFAEdge(symbol+SYMBOL_BASE,endState));
+							startState->cedges[symbol+SYMBOL_BASE]=endState;
 						}
 				}
 				else
@@ -545,34 +506,30 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 							lastC++;
 							while(lastC<=*(p+1))
 							{
-								startState->edges.insert(NFAEdge(lastC++,endState));
+								startState->cedges[lastC++]=endState;
 							}
 							++p;
 						}
-						else if(*p=='\\')					
-						{
-							startState->edges.insert(NFAEdge(handleTransChar(*(++p)),endState));
-						}
 						else
 						{
-							startState->edges.insert(NFAEdge(*p,endState));
+							startState->cedges[escapeChar(p)]=endState;
 						}
 
 						lastC=*p;
 						p++;
 					}
-				}	
+				}
 
-				stateStack.push(endState);stateStack.push(startState);
-			}	
+				stateStack.push(NFAFrag(startState,endState));
+			}
 			break;
 		
 		case '\\':			
 			{
-				NFAState* startState=new NFAState(stateNum);allStates[stateNum++]=startState;
-				NFAState* endState=new NFAState(stateNum);allStates[stateNum++]=endState;
-				startState->edges.insert(NFAEdge(handleTransChar(*(++p)),endState));
-				stateStack.push(endState);stateStack.push(startState);
+				NFAState* startState=newState();
+				NFAState* endState=newState();
+				startState->cedges[escapeChar(p)]=endState;
+				stateStack.push(NFAFrag(startState,endState));
 			}
 			break;
 
@@ -580,9 +537,10 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 			opstack.push('(');
 			break;
 		case ')':
+			// todo: error handling
 			while(!opstack.empty()&&opstack.top()!='(')
 			{
-				handleOp(opstack.top(),stateStack,stateNum);
+				handleOp(opstack.top(),opstack,stateStack);
 				opstack.pop();
 			}
 			opstack.pop();
@@ -592,172 +550,110 @@ void NFAPart::fromRE(const char* re,AuxNFAPart& auxNFAPart)
 		case '?':
 		case '+':
 		case '*':
-			pushOp(*p,opstack,stateStack,stateNum);
+			pushOp(*p,opstack,stateStack);
 			break;
 
 		default:
 			//include .
-			handleOp(*p,stateStack,stateNum);//normal
+			handleOp(*p,opstack,stateStack);//normal
 			break;
 		}
 		p++;
 	}
 	while(!opstack.empty())
 	{
-		handleOp(opstack.top(),stateStack,stateNum);
+		handleOp(opstack.top(),opstack,stateStack);
 		opstack.pop();
 	}
 
-	stateCnt=stateNum;
-	startState=stateStack.top();stateStack.pop();
-	endState=stateStack.top();stateStack.pop();
+	
+	NFAFrag frag=stateStack.top();stateStack.pop();
+	//start=frag.start;
+	//out=frag.out;
+	return frag;
 
+	// todo: check state
 	//stateStack should be empty
 }
 
-void NFAPart::clear()
+void NFA::clear()
 {
 	for(int i=0;i<stateCnt;i++) delete allStates[i];
 	memset(allStates,0,sizeof(allStates));
-	stateCnt=0;startState=endState=NULL;
+	stateCnt=0;start=out=NULL;
 }
 
-// void NFAPart::getCopy(NFAState** dstStates,int& startpos,NFAState*& sState,NFAState*& eState)
-// {
-// 	for(int i=0;i<stateCnt;i++)
-// 	{
-// 		if(allStates[i])
-// 		{
-// 		dstStates[startpos+i]=new NFAState(startpos+i);	
-// 		dstStates[startpos+i]->eBits=(allStates[i]->eBits)<<startpos;
-// 		}
-// 		else dstStates[startpos+i]=NULL;
-// 	}
-// 
-// 	//copy edge
-// 	NFAEdge* newEdge=NULL;
-// 	for(int i=0;i<stateCnt;i++)
-// 	{
-// 		if(!allStates[i]) continue;
-// 		for(EdgeItType ite=allStates[i]->edges.begin();ite!=allStates[i]->edges.end();ite++)
-// 			dstStates[startpos+i]->edges.insert(NFAEdge((*ite).onSymbol,dstStates[(*ite).toState->state+startpos]));
-// 
-// 		for(EdgeInItType ite=allStates[i]->edgesin.begin();ite!=allStates[i]->edgesin.end();ite++)
-// 			dstStates[startpos+i]->edgesin.insert(dstStates[(*ite)->state+startpos]);
-// 		
-// 		for(Edge0ItType it0=allStates[i]->edge0out.begin();it0!=allStates[i]->edge0out.end();it0++)
-// 			dstStates[startpos+i]->edge0out.insert(dstStates[(*it0)->state+startpos]);
-// 		
-// 		for(EdgeInItType it0=allStates[i]->edge0in.begin();it0!=allStates[i]->edge0in.end();it0++)
-// 			dstStates[startpos+i]->edge0in.insert(dstStates[(*it0)->state+startpos]);
-// 	}
-// 
-// 	sState=dstStates[startState->state+startpos];
-// 	eState=dstStates[endState->state+startpos];
-// 	//stCnt=stateCnt;
-// 	startpos+=stateCnt;
-// }
-// 
-// 
-
-
-//bool marked[NFASTATE_MAX_COUNT];
-//BitSet<NFASTATE_MAX_COUNT> marked;
-void NFAFrag::getCopy(NFAState** dstStates,int& startpos,NFAState*& sState,NFAState*& eState,bool startfrom0)
+NFAFrag NFA::cloneFrag(const NFAFrag& frag)
 {
-	int orgstart=startfrom0?0:startState->state;
-
 	list<NFAState*> workList;
+	BitSet visited;
 
-	int theindex,nextindex,maxindex=-1;
+	workList.push_back(frag.start);
+	visited.set(frag.start->stateId);	
 
-	NFAState* thestate;
+	map<NFAState*,NFAState*> old2new;
+	typedef map<NFAState*,NFAState*>::iterator Old2NewIter;
 
-	workList.push_back(startState);
 	while(!workList.empty())
 	{
-		thestate=workList.front();workList.pop_front();
+		NFAState* cur_state=workList.front();workList.pop_front();
 
-		theindex=startpos+thestate->state-orgstart;
-		if(theindex>maxindex) maxindex=theindex;
-
-		if(dstStates[theindex]==NULL)
+		for(map<int,NFAState*>::iterator it=cur_state->cedges.begin();it!=cur_state->cedges.end();++it)
 		{
-			dstStates[theindex]=new NFAState(theindex);
-			dstStates[theindex]->eBits=((thestate->eBits)<<startpos);
-		}
-
-		for(EdgeInItType ite=thestate->edge0in.begin();ite!=thestate->edge0in.end();ite++)
-		{
-			nextindex=startpos+(*ite)->state-orgstart;
-			if(dstStates[nextindex]==NULL)
+			NFAState* nextstate=0;
+			
+			Old2NewIter findit;
+			if((findit=old2new.find(it->second))==old2new.end())
 			{
-				if(nextindex>maxindex) maxindex=nextindex;
-				dstStates[nextindex]=new NFAState(nextindex);
-				dstStates[nextindex]->eBits=(((*ite)->eBits)<<startpos);
-
-				workList.push_back(*ite);
-			}		
-			dstStates[theindex]->edge0in.insert(dstStates[nextindex]);
-		}
-
-		for(Edge0ItType ite=thestate->edge0out.begin();ite!=thestate->edge0out.end();ite++)
-		{
-			nextindex=startpos+(*ite)->state-orgstart;
-			if(dstStates[nextindex]==NULL)
-			{
-				if(nextindex>maxindex) maxindex=nextindex;
-				dstStates[nextindex]=new NFAState(nextindex);
-				dstStates[nextindex]->eBits=(((*ite)->eBits)<<startpos);
-
-				workList.push_back(*ite);
-			}	
-			dstStates[theindex]->edge0out.insert(dstStates[nextindex]);
-		}
-
-		for(EdgeItType ite=thestate->edges.begin();ite!=thestate->edges.end();ite++)
-		{
-			nextindex=startpos+(*ite).toState->state-orgstart;
-			if(dstStates[nextindex]==NULL)
-			{
-				if(nextindex>maxindex) maxindex=nextindex;
-				dstStates[nextindex]=new NFAState(nextindex);
-				dstStates[nextindex]->eBits=(((*ite).toState->eBits)<<startpos);
-
-				workList.push_back((*ite).toState);
+				old2new[it->second]=nextstate=newState();
 			}
-			dstStates[theindex]->edges.insert(NFAEdge((*ite).onSymbol,dstStates[nextindex]));
+			else
+				nextstate=findit->second;
+
+			cur_state->cedges[it->first]=nextstate;
+
+			if(!visited[nextstate->stateId])
+				workList.push_back(nextstate);
+		}
+
+		for(NFAStateArrIter it=cur_state->eedges.begin();it!=cur_state->eedges.end();++it)
+		{
+			NFAState* nextstate=0;
+
+			Old2NewIter findit;
+			if((findit=old2new.find(*it))==old2new.end())
+			{
+				old2new[*it]=nextstate=newState();
+			}
+			else
+				nextstate=findit->second;
+
+			patch(cur_state,nextstate);
+
+			if(!visited[nextstate->stateId])
+				workList.push_back(nextstate);
 		}
 	}
 
-
-	sState=dstStates[startState->state-orgstart+startpos];
-	eState=dstStates[endState->state-orgstart+startpos];
-	//stCnt=maxindex-startpos+1;
-	startpos=maxindex+1;
+	NFAFrag ret(old2new[frag.start],old2new[frag.out]);
+	return ret;
 }
-
 
 
 /////////////////////////////////////////////
-NFA::NFA()
-{
-	stateCnt=0;startState=NULL;
-	memset(allStates,0,sizeof(allStates));
-}
-
-void NFA::build(LexicalDesc& lexDesc)
+void NFA::build(const LexEnv* lexEnv)
 {
 	clear();
 
 	map<string,int> mapStartStates;
-	int i=0;
-	for(;i<lexDesc.startStateCnt;i++)
+	typedef map<string,int>::iterator String2IntIter;
+
+	for(int i=0,iLen=lexEnv->startStates.size();i<iLen;i++)
 	{
-		allStates[i]=nfaStartStates[i]=new NFAState(i);
-		mapStartStates.insert(pair<string,int>(lexDesc.startStates[i],i));
+		allStates[i]=nfaStartStates[i]=newState();
+		mapStartStates[lexEnv->startStates[i]]=i;
 	}
-	stateCnt=i;
+
 // 	mapStartStates.insert(pair<char*,int>("COMMENT",1));
 // 	mapStartStates.insert(pair<char*,int>("QUOTE",2));	
 
@@ -769,35 +665,36 @@ void NFA::build(LexicalDesc& lexDesc)
 // 		return;
 // 	}
 	
-	char* p;
-
-	for(i=1;i<lexDesc.tokenDefCnt;i++)
+	int tokenDefCnt=lexEnv->tokenDefs.size();
+	for(int i=1;i<tokenDefCnt;i++) // skip dummy 0
 	{
 		int startindex=0;
-		p=lexDesc.tokenDefs[i].re;
-		if(lexDesc.tokenDefs[i].re[0]=='<')
+		const char* p=lexEnv->tokenDefs[i].re;
+		if(lexEnv->tokenDefs[i].re[0]=='<')
 		{
-			char buf[100];
-			p++;
-			char* q=buf;
+			const char* q=++p;
+			while(*p&&*p!='>') ++p;
 
-			while(*p!='>') *(q++)=*(p++);
-			*q='\0';p++;
+			string sstate_name(q,p-q);
 
-			startindex=mapStartStates[buf];//if empty,0	
-			//report it if no such startstate, and force it to 0 to continue
+			String2IntIter it=mapStartStates.find(sstate_name);
+			if(it!=mapStartStates.end())
+				startindex=it->second;
+			//else
+			//report it if no such start-state, and force it to 0 to continue
+
+			if(*p=='>') ++p;
 		}
 
-		fromRE(p,lexDesc.auxNFAPart);
-		endState->acceptStrIndex=i;
-		
-		elinkNFAState(nfaStartStates[startindex],startState);
+		NFAFrag frag=fromRE(p,lexEnv->marcoDefinitions);
+		frag.out->acceptStrIndex=i; // >0
+		patch(nfaStartStates[startindex],frag.start);
 	}
 
-	startState=nfaStartStates[0];
+	start=nfaStartStates[0];
+	// out doesn't matter
+	out=0;//?
+
+	printf("# NFA states: %d\n",stateCnt);
 }
 
-NFA::~NFA()
-{
-	clear();
-}

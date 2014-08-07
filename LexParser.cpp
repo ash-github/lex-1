@@ -111,7 +111,7 @@ void LexParser::handleSematicAction(int rnum)
 		{ofstream outf("_lblock2",ios::app);scanner.writeLitBlock(outf);outf.close();}
 		break;
 	case 8:
-		lex.auxNFAPart.addPart(sstack.getAt(stackstartpos+1).val.str,sstack.getAt(stackstartpos+2).val.str);
+		lex.addMacroDefinition(sstack.getAt(stackstartpos+1).val.str,sstack.getAt(stackstartpos+2).val.str);
 		break;
 	case 11:
 		lex.addStartState(sstack.getAt(stackstartpos+2).val.str);

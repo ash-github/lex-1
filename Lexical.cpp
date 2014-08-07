@@ -21,44 +21,42 @@ struct setAcceptCaseCMP
 typedef set<AcceptCase,setAcceptCaseCMP>::iterator AcceptCaseIterator;
 void Lexical::generate()
 {
-	ofstream outf("_lex.h");
-	ifstream inf("LEX_H_TEMPLATE");
-	string buffer;
-	if(inf.is_open())
+	printf("generating scanner...\n");
 	{
-		while(!inf.eof())
+		ofstream outf("_lex.h");
+		ifstream inf("LEX_TEMPLATE.H");
+		if(inf.is_open())
 		{
-			getline(inf,buffer);
-			outf<<buffer<<endl;
-		}		
-	}
-	else puts("missing file: LEX_H_TEMPLATE");
+			outf<<inf.rdbuf();
+		}
+		else puts("missing file: LEX_TEMPLATE.H");
 
-	inf.close();inf.clear();	
-	outf.close();
+		inf.close();
+		outf.close();
+	}	
 
-	outf.open("_lex.cpp");
+	ofstream outf("_lex.cpp");
+	ifstream inf;
 
-	outf<<"#include \"_lex.h\""<<endl;
-	outf<<"#include \"_tokens.h\""<<endl;
-	outf<<"#include <stack>"<<endl;
-	outf<<"using namespace std;"<<endl;
-	outf<<endl;
-	outf<<"#define ECHO puts(yytext)"<<endl;
-
-	outf<<"#define BEGINSTATE startState="<<endl;
-	for(int i=0;i<startStateCnt;i++)
+	outf<<	"#include \"_lex.h\"\n"
+			"#include \"_tokens.h\"\n"
+			"#include <stack>\n"
+			"using namespace std;\n\n"
+			"#define ECHO puts(yytext)\n"
+			"#define BEGINSTATE startState=\n";
+	for(int i=0,iLen=startStates.size();i<iLen;i++)
 		outf<<"#define "<<startStates[i]<<"\t\t"<<i+1<<endl;
 	outf<<endl;
 
 	inf.open("_lblock1");
 	if(inf.is_open())
 	{
-		while(!inf.eof())
-		{
-			getline(inf,buffer);
-			outf<<buffer<<endl;
-		}
+// 		while(!inf.eof())
+// 		{
+// 			getline(inf,buffer);
+// 			outf<<buffer<<endl;
+// 		}
+		outf<<inf.rdbuf();
 		inf.close();inf.clear();
 		remove("_lblock1");
 	}	
@@ -121,50 +119,50 @@ void Lexical::generate()
 	// 			//outf<<"\t\tbreak;"<<endl;
 	// 		}
 	// 	}
-	outf<<"\tdefault:"<<endl;
-	outf<<"\t\treturn 0;"<<endl;
-
-	outf<<"\t}"<<endl;
-	outf<<"\treturn 0;"<<endl;
-	outf<<"}"<<endl;
-
-	outf<<"int Lex::yylex()"<<endl;
-	outf<<"{"<<endl;
-	outf<<"Lrescan:"<<endl;
+	outf<<	"\tdefault:\n"
+			"\t\treturn 0;\n"
+			"\t}\n"
+			"\treturn 0;\n"
+			"}\n"
+			"int Lex::yylex()\n{\n"
+			"Lrescan:\n";
 
 	inf.open("_lblock2");
 	if(inf.is_open())
 	{
-		while(!inf.eof())
-		{
-			getline(inf,buffer);
-			outf<<buffer<<endl;
-		}
+// 		while(!inf.eof())
+// 		{
+// 			getline(inf,buffer);
+// 			outf<<buffer<<endl;
+// 		}
+		outf<<inf.rdbuf();
 		inf.close();inf.clear();
 		remove("_lblock2");
 	}	
 	else{inf.close();inf.clear();}
 
-	inf.open("LEX_CPP_TEMPLATE");
+	inf.open("LEX_TEMPLATE.CPP");
 	if(inf.is_open())
 	{
-		while(!inf.eof())
-		{
-			getline(inf,buffer);
-			outf<<buffer<<endl;
-		}		
+// 		while(!inf.eof())
+// 		{
+// 			getline(inf,buffer);
+// 			outf<<buffer<<endl;
+// 		}
+		outf<<inf.rdbuf();
 	}
-	else puts("missing file: LEX_CPP_TEMPLATE");
+	else puts("missing file: LEX_TEMPLATE.CPP");
 	inf.close();inf.clear();
 
 	inf.open("_lblock3");
 	if(inf.is_open())
 	{
-		while(!inf.eof())
-		{
-			getline(inf,buffer);
-			outf<<buffer<<endl;
-		}
+// 		while(!inf.eof())
+// 		{
+// 			getline(inf,buffer);
+// 			outf<<buffer<<endl;
+// 		}
+		outf<<inf.rdbuf();
 		inf.close();inf.clear();
 		remove("_lblock3");
 	}	

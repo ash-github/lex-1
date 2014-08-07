@@ -1,9 +1,9 @@
 #ifndef _YANJUN_DFA_H_
 #define _YANJUN_DFA_H_
 
-#include "Limits.h"
+#include "define.h"
 #include "NFA.h"
-struct LexicalDesc;
+
 class DFA
 {
 public:
@@ -11,18 +11,18 @@ public:
 
 	DFA(){stateCnt=0;}
 
-	void build(LexicalDesc& lexdesc);
+	void build(const LexEnv*);
 
 	void clear();
 
-	string recognize(TokenLexDef tokenDefs[],const char* str);
+	//string recognize(TokenLexDef tokenDefs[],const char* str);
 
-	void minimize();
+	//void minimize();
 
-	DFAState* eclosure(NFAState* nfastate);	
-	
-	DFAState* quickEclosure(DFAState* dfastate);
-	void completeEclosure(DFAState* dfastate,DFAState* res);
+	DFAState* newState()
+	{
+		return new DFAState(stateCnt++);
+	}
 
 	int dfaTable[DFASTATE_MAX_COUNT][SYMBOL_CNT];
 	int dfaAccept[DFASTATE_MAX_COUNT];//re index

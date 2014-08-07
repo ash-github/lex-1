@@ -4,7 +4,7 @@
 #include <fstream>
 using namespace std;
 #include "YYSTYPE.h"
-#include "Limits.h"
+#include "define.h"
 
 class LexScanner
 {

@@ -35,4 +35,12 @@
 #define RULEBODY_MAX_LENGTH 256
 
 //#define EXCLUSIVESTARTSTATE_BASE 256
+
+// typedef unordered_map map;
+
+// fwd
+struct TokenLexDef;
+class Lexical;
+typedef Lexical LexEnv;
+
 #endif

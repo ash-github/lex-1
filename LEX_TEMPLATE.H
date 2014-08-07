@@ -2,7 +2,7 @@
 #define _YANJUN_LEX_H_
 
 #include "YYSTYPE.h"
-#include "Limits.h"
+#include "Define.h"
 
 class Lex
 {

@@ -86,30 +86,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="AuxNFAPart.cpp" />
-    <ClCompile Include="BitSet.cpp" />
     <ClCompile Include="DFA.cpp" />
     <ClCompile Include="Lexical.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="NFA.cpp" />
-    <ClCompile Include="State.cpp" />
     <ClCompile Include="LexParser.cpp" />
     <ClCompile Include="LexScanner.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="AuxNFAPart.h" />
     <ClInclude Include="BitSet.h" />
+    <ClInclude Include="Define.h" />
     <ClInclude Include="DFA.h" />
     <ClInclude Include="Lexical.h" />
-    <ClInclude Include="LexicalDesc.h" />
-    <ClInclude Include="Limits.h" />
     <ClInclude Include="NFA.h" />
-    <ClInclude Include="NFAFrag.h" />
     <ClInclude Include="State.h" />
     <ClInclude Include="LexParser.h" />
     <ClInclude Include="LexScanner.h" />
     <ClInclude Include="LexTokens.h" />
-    <ClInclude Include="Macro.h" />
     <ClInclude Include="Stack.h" />
     <ClInclude Include="YYSTYPE.h" />
   </ItemGroup>

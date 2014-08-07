@@ -1,11 +1,11 @@
 #ifndef _YANJUN_BITSET_H_
 #define _YANJUN_BITSET_H_
 
-#include "Limits.h"
+#include "define.h"
 #include "string.h"
 
 #define CALC_UNITS(x) (((x/sizeof(unsigned long))>>3)+1)
-
+#define UNIT_IN_BITS (sizeof(unsigned long)<<3)
 class BitSet
 {
 public:
@@ -27,12 +27,12 @@ public:
 	}
 	void set(int pos)
 	{
-		int lp=pos/32,rp=pos%32;
+		int lp=pos/UNIT_IN_BITS,rp=pos%UNIT_IN_BITS;
 		bits[lp]|=1<<rp;		
 	}	
 	void clear(int pos)
 	{
-		int lp=pos/32,rp=pos%32;
+		int lp=pos/UNIT_IN_BITS,rp=pos%UNIT_IN_BITS;
 		bits[lp]&=~(1<<rp);	
 	}
 	void or(const BitSet& b)
@@ -43,9 +43,9 @@ public:
 
 	bool get(int pos)
 	{
-		int lp=pos/32,rp=pos%32;
+		int lp=pos/UNIT_IN_BITS,rp=pos%UNIT_IN_BITS;
 
-		return bits[lp]&(1<<rp);
+		return ((bits[lp]&(1<<rp))!=0);
 	}
 
 	int getByteCnt() const{return totalBytes;}
@@ -68,12 +68,26 @@ public:
 		return res;
 	}
 
-	friend bool operator<(const BitSet& a,const BitSet& b);
-	friend bool operator==(const BitSet& a,const BitSet& b);
+	bool operator<(const BitSet& b)const
+	{
+		int i=getByteCnt();
+		while(i>=0&&bits[i]==b.bits[i]) i--;
+
+		if(i<0) return false;
+		return bits[i]<b.bits[i];
+	}
+	bool operator==(const BitSet& b)const
+	{
+		int i=getByteCnt();
+		while(i>=0&&bits[i]==b.bits[i]) i--;
+
+		return i<0;
+	}
 
 private:
 	unsigned long bits[CALC_UNITS(NFASTATE_MAX_COUNT)];
 	int totalBytes;
 };
+
 
 #endif

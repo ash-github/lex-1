@@ -1,94 +1,91 @@
 #ifndef _YANJUN_STATE_H_
 #define _YANJUN_STATE_H_
 
-#include <list>
-#include <set>
+#include <map>
 #include <vector>
 using namespace std;
 
-#include "Limits.h"
+#include "define.h"
 #include "BitSet.h"
 
-class NFAState;
-class DFAState;
-
-struct NFAEdge
-{
-	NFAEdge(int sb, NFAState* next){onSymbol=sb;toState=next;}
-	int onSymbol;
-	NFAState* toState;
-};
-
-struct setNFAEdgeCMP
-{
-	bool operator()(const NFAEdge& first, const NFAEdge& second) const 
-	{        
-		return first.toState<second.toState||(first.toState==second.toState&&first.onSymbol<second.onSymbol);  
-	} 
-};
-
-// typedef set<NFAState*>::iterator EdgeInItType;
-// typedef set<NFAEdge,setNFAEdgeCMP>::iterator EdgeItType;
-// typedef set<NFAState*>::iterator Edge0ItType;
-
-struct setNFACMP
-{
-	bool operator()(const NFAState* first, const NFAState* second) const;
-};
-
-typedef set<NFAState*,setNFACMP>::iterator EdgeInItType;
-typedef set<NFAEdge,setNFAEdgeCMP>::iterator EdgeItType;
-typedef set<NFAState*,setNFACMP>::iterator Edge0ItType;
 
 class NFAState
 {
 public:
-	NFAState(int num);
-	~NFAState();
+	NFAState(int id)
+	{
+		stateId=id;acceptStrIndex=0;eBits.reset();
+		eBits.set(id);
+	}
+	~NFAState()
+	{
+		// 	set<NFAEdge*,setNFAEdgeCMP>::iterator it=edges.begin();
+		// 	for(;it!=edges.end();it++)
+		// 		delete *it;
+		//edges.clear();
+	}
 
-	int state;
-	
-	set<NFAEdge,setNFAEdgeCMP> edges;
+	int stateId;
 
-	set<NFAState*,setNFACMP> edge0in;//another state link to this
-	set<NFAState*,setNFACMP> edge0out;//link to another state
-	
-	BitSet eBits;
+	// from the way we build it, one char one next
+	map<int,NFAState*> cedges;
+	vector<NFAState*> eedges; // epsilon
+	BitSet eBits; // fast check if a state is in its eclosure
+
 	int acceptStrIndex;
 };
-
 
 
 //this class is used as set of nfastates
 class DFAState
 {
 public:
-	DFAState();
-	~DFAState();
+	DFAState()
+	{
+		stateId=-1;acceptStrIndex=0;
+		nfaBits.reset();
+	}
+	DFAState(int id)
+	{
+		stateId=id;acceptStrIndex=0;
+		nfaBits.reset();
+	}
+	~DFAState()
+	{
+		clear();
+	}
 
-	void clear();
-	bool addNFAState(NFAState* nfastate);
-	void updateAcString();
+	void clear()
+	{
+		nfaStates.clear();
+		// todo: delete
+		nfaBits.reset();
+		//transitSymbols.clear();
+		acceptStrIndex=0;
+	}
 
-	int stateNum;
+	bool addNFAState(NFAState* nfastate)
+	{
+		if(nfaBits[nfastate->stateId]) return false;
+
+		nfaStates.push_back(nfastate);
+		nfaBits.set(nfastate->stateId);
+		return true;
+	}
+	void updateAcString(NFAState* nfastate)
+	{
+		if(nfastate->acceptStrIndex>0&&nfastate->acceptStrIndex<acceptStrIndex)
+			acceptStrIndex=nfastate->acceptStrIndex;
+	}
+
+	int stateId;
 	int acceptStrIndex;
 	
-	set<NFAState*> nfaStates;
-
-//	set<int> nfaStateNums;
+	vector<NFAState*> nfaStates;
 	BitSet nfaBits;
-
-	//set<int> transitSymbols;
 };
 
-inline bool DFAState::addNFAState(NFAState* nfastate)
-{
-	if(nfaBits[nfastate->state]) return false;
-
-	nfaStates.insert(nfastate);
-	nfaBits.set(nfastate->state);
-	return true;
-}
+typedef vector<NFAState*>::iterator NFAStateArrIter;
 
 
 #endif// _YANJUN_STATE_H_
